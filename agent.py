@@ -1,4 +1,5 @@
-import anthropic
+from google import genai
+from google.genai import types
 import json
 import os
 from retriever import CatalogRetriever
@@ -6,11 +7,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-api_key = os.getenv("ANTHROPIC_API_KEY")
+api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    raise ValueError("ANTHROPIC_API_KEY not found in .env file.")
+    raise ValueError("GEMINI_API_KEY not found in .env file.")
 
-client = anthropic.Anthropic(api_key=api_key)
+client = genai.Client(api_key=api_key)
 retriever = CatalogRetriever()
 
 SYSTEM_PROMPT = """
@@ -64,6 +65,16 @@ def format_catalog_context(assessments: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def clean_json(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+    return raw
+
+
 def run_agent(messages: list[dict]) -> dict:
     response = None
     try:
@@ -77,32 +88,39 @@ def run_agent(messages: list[dict]) -> dict:
         # Step 2: Build full system prompt with catalog injected
         full_system = SYSTEM_PROMPT + "\n\n" + catalog_context
 
-        # Step 3: Convert messages to Anthropic format
-        anthropic_messages = [
-            {"role": "assistant" if m["role"] == "assistant" else "user",
-             "content": m["content"]}
-            for m in messages
-        ]
+        # Step 3: Build conversation history (all except last message)
+        history = []
+        for m in messages[:-1]:
+            role = "user" if m["role"] == "user" else "model"
+            history.append(types.Content(
+                role=role,
+                parts=[types.Part(text=m["content"])]
+            ))
 
-        # Step 4: Call Claude
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=full_system,
-            messages=anthropic_messages
+        # Last message sent separately
+        last_message = messages[-1]["content"]
+
+        # Step 4: Call Gemini using new google-genai SDK
+        # gemini-1.5-flash: free tier = 15 RPM, 1500 req/day, 1M tokens/day
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=history + [types.Content(
+                role="user",
+                parts=[types.Part(text=last_message)]
+            )],
+            config=types.GenerateContentConfig(
+                system_instruction=full_system,
+                temperature=0.2,
+                response_mime_type="application/json",
+            )
         )
 
-        raw = response.content[0].text.strip()
+        raw = response.text.strip()
         print(f"[DEBUG] Raw response: {raw[:500]}")
 
-        # Step 5: Strip markdown fences if present
-        if raw.startswith("```"):
-            lines = raw.split("\n")[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            raw = "\n".join(lines).strip()
-
-        parsed = json.loads(raw)
+        # Step 5: Parse JSON
+        cleaned = clean_json(raw)
+        parsed = json.loads(cleaned)
 
         # Step 6: Safety check — strip hallucinated URLs
         valid_urls = {a["url"] for a in retriever.assessments}
@@ -118,7 +136,7 @@ def run_agent(messages: list[dict]) -> dict:
         }
 
     except json.JSONDecodeError as e:
-        raw_text = response.content[0].text if response else "no response"
+        raw_text = response.text if response else "no response"
         print(f"[ERROR] JSON parse failed: {e}")
         print(f"[ERROR] Raw was: {raw_text}")
         return {
