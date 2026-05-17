@@ -34,7 +34,7 @@ class CatalogRetriever:
         embeddings = []
         for text in texts:
             response = client.models.embed_content(
-                model="text-embedding-004",
+                model="gemini-embedding-001",
                 contents=text,
                 config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
             )
@@ -43,7 +43,7 @@ class CatalogRetriever:
 
     def _embed_query(self, query: str) -> np.ndarray:
         response = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-001",
             contents=query,
             config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
         )
@@ -74,7 +74,7 @@ class CatalogRetriever:
 
         faiss.write_index(self.index, INDEX_PATH)
         with open(META_PATH, "wb") as f:
-            pickle.dump(self.assessments, f)
+            pickle.dump(self.assessments, f) 
 
         print(f"Built and saved index with {len(self.assessments)} assessments.")
 
