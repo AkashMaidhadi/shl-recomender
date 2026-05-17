@@ -103,7 +103,7 @@ def run_agent(messages: list[dict]) -> dict:
         # Step 4: Call Gemini using new google-genai SDK
         # gemini-1.5-flash: free tier = 15 RPM, 1500 req/day, 1M tokens/day
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             contents=history + [types.Content(
                 role="user",
                 parts=[types.Part(text=last_message)]
