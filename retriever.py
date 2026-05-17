@@ -9,7 +9,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+_client = None
+
+def get_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return _client
 
 CATALOG_PATH = "catalog.json"
 INDEX_PATH = "faiss.index"
@@ -33,7 +39,7 @@ class CatalogRetriever:
         """Embed a list of texts using the new google-genai SDK."""
         embeddings = []
         for text in texts:
-            response = client.models.embed_content(
+            response = get_client().models.embed_content(
                 model="gemini-embedding-001",
                 contents=text,
                 config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
@@ -42,7 +48,7 @@ class CatalogRetriever:
         return np.array(embeddings, dtype="float32")
 
     def _embed_query(self, query: str) -> np.ndarray:
-        response = client.models.embed_content(
+        response = get_client().models.embed_content(
             model="gemini-embedding-001",
             contents=query,
             config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
