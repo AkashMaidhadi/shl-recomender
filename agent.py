@@ -1,4 +1,5 @@
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 import os
 from retriever import CatalogRetriever
@@ -10,7 +11,7 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY not found in .env file.")
 
-genai.configure(api_key=api_key)
+client = genai.Client(api_key=api_key)
 retriever = CatalogRetriever()
 
 SYSTEM_PROMPT = """
@@ -64,17 +65,6 @@ def format_catalog_context(assessments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_conversation(messages: list[dict]) -> list[dict]:
-    gemini_messages = []
-    for m in messages:
-        role = "user" if m["role"] == "user" else "model"
-        gemini_messages.append({
-            "role": role,
-            "parts": [m["content"]]
-        })
-    return gemini_messages
-
-
 def clean_json(raw: str) -> str:
     raw = raw.strip()
     if raw.startswith("```"):
@@ -95,30 +85,34 @@ def run_agent(messages: list[dict]) -> dict:
         print(f"[DEBUG] Query: {query[:100]}")
         print(f"[DEBUG] Retrieved {len(retrieved)} assessments")
 
-        # Step 2: Inject catalog into system prompt
+        # Step 2: Build full system prompt with catalog
         full_system = SYSTEM_PROMPT + "\n\n" + catalog_context
 
-        # Step 3: Build Gemini conversation history
-        # Gemini has no system role — inject as first user/model exchange
-        history = [
-            {"role": "user", "parts": [full_system]},
-            {"role": "model", "parts": ["Understood. I will only use the retrieved catalog data and follow all rules."]},
-        ]
-        history += format_conversation(messages)
+        # Step 3: Build conversation history for Gemini
+        # New SDK uses Content objects with role user/model
+        history = []
+        for m in messages[:-1]:  # all except last message
+            role = "user" if m["role"] == "user" else "model"
+            history.append(types.Content(
+                role=role,
+                parts=[types.Part(text=m["content"])]
+            ))
 
-        # Step 4: Call Gemini — gemini-1.5-flash has best free tier limits
-        # Free tier: 15 RPM, 1500 requests/day, 1M tokens/day
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        last_message = messages[-1]["content"]
+
+        # Step 4: Call Gemini with new SDK
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=history + [types.Content(
+                role="user",
+                parts=[types.Part(text=last_message)]
+            )],
+            config=types.GenerateContentConfig(
+                system_instruction=full_system,
                 temperature=0.2,
                 response_mime_type="application/json",
             )
         )
-
-        chat = model.start_chat(history=history[:-1])
-        last_message = history[-1]["parts"][0]
-        response = chat.send_message(last_message)
 
         raw = response.text.strip()
         print(f"[DEBUG] Raw response: {raw[:500]}")
@@ -141,7 +135,7 @@ def run_agent(messages: list[dict]) -> dict:
         }
 
     except json.JSONDecodeError as e:
-        raw_text = response.content[0].text if response else "no response"
+        raw_text = response.text if response else "no response"
         print(f"[ERROR] JSON parse failed: {e}")
         print(f"[ERROR] Raw was: {raw_text}")
         return {

@@ -3,11 +3,13 @@ import numpy as np
 import faiss
 import pickle
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 CATALOG_PATH = "catalog.json"
 INDEX_PATH = "faiss.index"
@@ -28,24 +30,24 @@ class CatalogRetriever:
             self._build_index()
 
     def _embed(self, texts: list[str]) -> np.ndarray:
-        """Use Gemini embedding API — free, no local model needed."""
+        """Embed a list of texts using the new google-genai SDK."""
         embeddings = []
         for text in texts:
-            result = genai.embed_content(
-                model="models/text-embedding-004",
-                content=text,
-                task_type="retrieval_document"
+            response = client.models.embed_content(
+                model="text-embedding-004",
+                contents=text,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
             )
-            embeddings.append(result["embedding"])
+            embeddings.append(response.embeddings[0].values)
         return np.array(embeddings, dtype="float32")
 
     def _embed_query(self, query: str) -> np.ndarray:
-        result = genai.embed_content(
-            model="models/text-embedding-004",
-            content=query,
-            task_type="retrieval_query"
+        response = client.models.embed_content(
+            model="text-embedding-004",
+            contents=query,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
         )
-        return np.array([result["embedding"]], dtype="float32")
+        return np.array([response.embeddings[0].values], dtype="float32")
 
     def _build_index(self):
         with open(CATALOG_PATH, "r") as f:
